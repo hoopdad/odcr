@@ -1,0 +1,202 @@
+{
+"mode": "Indexed",
+    "metadata": {
+      "version": "2.0.0-vmcontributor",
+      "category": "Compute"
+    },
+    "parameters": {
+      "capacityReservationGroupResourceId": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Capacity Reservation Group",
+          "description": "Select the Capacity Reservation Group to assign matching VMs to. The portal will render a resource picker; the full resource ID is passed to the policy rule automatically.",
+          "strongType": "Microsoft.Compute/capacityReservationGroups"
+        }
+      },
+      "targetRegion": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Target Region",
+          "description": "The Azure region this policy applies to. Must match the region of the Capacity Reservation Group. Example: 'westus3'",
+          "strongType": "location"
+        }
+      },
+      "vmSkus": {
+        "type": "Array",
+        "metadata": {
+          "displayName": "VM SKUs",
+          "description": "The VM SKUs (sizes) that this policy targets. Add exact size names. Only SKUs that support Capacity Reservations are valid. See: https://learn.microsoft.com/en-us/azure/virtual-machines/capacity-reservation-overview#supported-vm-series"
+        },
+        "defaultValue": [
+          "Standard_E2s_v4"
+        ]
+      },
+      "isZonal": {
+        "type": "Boolean",
+        "metadata": {
+          "displayName": "Is Zonal?",
+          "description": "Set to true if the Capacity Reservation Group targets a specific availability zone. Set to false for regional (no availability zone) assignments. The Capacity Reservation scope must match this setting or VM creation will fail. Note: the Availability Zone parameter below is ignored when this is false."
+        },
+        "defaultValue": false
+      },
+      "availabilityZone": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Availability Zone (ignored when Is Zonal is false)",
+          "description": "The availability zone number to match ('1', '2', or '3'). Only evaluated when Is Zonal is set to true — leave blank for regional assignments. Azure Policy does not support hiding parameters conditionally, so this field is always shown."
+        },
+        "allowedValues": [
+          "",
+          "1",
+          "2",
+          "3"
+        ],
+        "defaultValue": ""
+      },
+      "requiredTagName": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Required Tag Name",
+          "description": "The name of the tag that must be present on the VM for this policy to apply."
+        },
+        "defaultValue": "UseCapacityReservation"
+      },
+      "requiredTagValue": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Required Tag Value",
+          "description": "The value the required tag must have for this policy to apply. Leave blank to match on tag presence only (any value will pass)."
+        },
+        "defaultValue": "true"
+      },
+      "excludedPriorities": {
+        "type": "Array",
+        "metadata": {
+          "displayName": "Excluded VM Priorities",
+          "description": "VM priority values excluded from ODCR assignment (for example, Spot)."
+        },
+        "defaultValue": [
+          "Spot"
+        ]
+      },
+      "effect": {
+        "type": "String",
+        "metadata": {
+          "displayName": "Effect",
+          "description": "The effect of the policy. 'Modify' automatically assigns VMs to the Capacity Reservation Group. 'Audit' flags non-compliant VMs without modifying them. 'Disabled' turns off the policy."
+        },
+        "allowedValues": [
+          "Modify",
+          "Audit",
+          "Disabled"
+        ],
+        "defaultValue": "Modify"
+      }
+    },
+    "policyRule": {
+      "if": {
+        "allOf": [
+          {
+            "field": "type",
+            "equals": "Microsoft.Compute/virtualMachines"
+          },
+          {
+            "field": "location",
+            "equals": "[parameters('targetRegion')]"
+          },
+          {
+            "field": "Microsoft.Compute/virtualMachines/hardwareProfile.vmSize",
+            "in": "[parameters('vmSkus')]"
+          },
+          {
+            "anyOf": [
+              {
+                "field": "Microsoft.Compute/virtualMachines/priority",
+                "exists": "false"
+              },
+              {
+                "field": "Microsoft.Compute/virtualMachines/priority",
+                "notIn": "[parameters('excludedPriorities')]"
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "allOf": [
+                  {
+                    "value": "[parameters('requiredTagValue')]",
+                    "equals": ""
+                  },
+                  {
+                    "field": "[concat('tags[', parameters('requiredTagName'), ']')]",
+                    "exists": "true"
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "value": "[parameters('requiredTagValue')]",
+                    "notEquals": ""
+                  },
+                  {
+                    "value": "[toLower(field(concat('tags[', parameters('requiredTagName'), ']')))]",
+                    "equals": "[toLower(parameters('requiredTagValue'))]"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "anyOf": [
+              {
+                "allOf": [
+                  {
+                    "value": "[parameters('isZonal')]",
+                    "equals": true
+                  },
+                  {
+                    "field": "Microsoft.Compute/virtualMachines/zones[*]",
+                    "equals": "[parameters('availabilityZone')]"
+                  }
+                ]
+              },
+              {
+                "allOf": [
+                  {
+                    "value": "[parameters('isZonal')]",
+                    "equals": false
+                  },
+                  {
+                    "field": "Microsoft.Compute/virtualMachines/zones[*]",
+                    "exists": "false"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "field": "Microsoft.Compute/virtualMachines/capacityReservation.capacityReservationGroup.id",
+            "exists": "false"
+          }
+        ]
+      },
+      "then": {
+        "effect": "[parameters('effect')]",
+        "details": {
+          "roleDefinitionIds": [
+            "/providers/Microsoft.Authorization/roleDefinitions/9980e02c-c2be-4d73-94e8-173b1dc7cf3c"
+          ],
+          "conflictEffect": "audit",
+          "operations": [
+            {
+              "operation": "addOrReplace",
+              "field": "Microsoft.Compute/virtualMachines/capacityReservation.capacityReservationGroup.id",
+              "value": "[parameters('capacityReservationGroupResourceId')]"
+            }
+          ]
+        }
+      }
+    }
+  }
